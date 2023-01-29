@@ -2,6 +2,8 @@ package diskache
 
 import (
 	"bytes"
+	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"testing"
@@ -59,6 +61,39 @@ func TestSetGet(t *testing.T) {
 	}
 }
 
+func TestGetExpiredKey(t *testing.T) {
+	opts := &Opts{
+		Directory:   TMP_DIR,
+		ExpiredTime: time.Second.Milliseconds() * 1,
+	}
+	dc, err := New(opts)
+	if err != nil {
+		t.Error(err)
+	}
+	key := "TestGetExpiredKey_1"
+	err = dc.SetExpired(key, []byte("String"), 1000)
+	if err != nil {
+		t.Error(err)
+	}
+	_, exists := dc.Get(key)
+	if !exists {
+		t.Error("expected: true, actual: false")
+	}
+	log.Println("waiting 2 seconds...")
+	time.Sleep(time.Second * 2)
+	_, exists = dc.Get(key)
+	if exists {
+		t.Error("expected: false, actual: true")
+	}
+	ttl, err := dc.getExpiredTime(key)
+	if err != nil {
+		t.Error(err)
+	}
+	if ttl != 0 {
+		t.Errorf("expected: 0, actual: %d", ttl)
+	}
+}
+
 // Test concurrent Set by multiple go routines
 func TestConcurrent(t *testing.T) {
 	// Cleanup
@@ -93,6 +128,93 @@ func TestConcurrent(t *testing.T) {
 	} else {
 		t.Error("Expected to get value from cache")
 	}
+}
+
+func TestDiskache_IsExpired(t *testing.T) {
+	opts := &Opts{
+		Directory:   TMP_DIR,
+		ExpiredTime: 1000,
+	}
+	dc, err := New(opts)
+	if err != nil {
+		t.Error("create instance error", err)
+	}
+	k := "TestDiskache_IsExpired"
+	err = dc.SetExpired(k, []byte("Hello"), 1000)
+	if err != nil {
+		t.Error(err)
+	}
+	expired, err := dc.IsExpired(k)
+	if err != nil {
+		t.Error(err)
+	}
+	if expired {
+		t.Error("expected: false, actual: true")
+	}
+	log.Println("wait 2 seconds...")
+	time.Sleep(time.Second * 2)
+	expired, err = dc.IsExpired(k)
+	if err != nil {
+		t.Error(err)
+	}
+	if !expired {
+		t.Error("expected: true, actual: false")
+	}
+}
+
+func TestTTL(t *testing.T) {
+	opts := &Opts{
+		Directory: TMP_DIR,
+	}
+	dc, err := New(opts)
+	ttl, err := dc.getExpiredTime(time.Now().String())
+	if err != nil {
+		t.Error(err)
+	}
+	if ttl != expiredTimestamp {
+		t.Errorf("expected: 1, actual: %d", ttl)
+	}
+	k := "test-key"
+	err = dc.setExpiredTime(k, getTimestamp())
+	if err != nil {
+		t.Error(err)
+	}
+	ttl, err = dc.getExpiredTime(k)
+	if err != nil {
+		t.Error(err)
+	}
+	if ttl == -1 {
+		t.Error("getExpiredTime must > 0")
+	}
+}
+
+func TestSetExpiredTime(t *testing.T) {
+	opts := &Opts{
+		Directory: TMP_DIR,
+	}
+	dc, err := New(opts)
+
+	k := "test-key-2"
+	err = dc.SetExpired(k, []byte("value"), time.Minute.Milliseconds())
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestNoExpiredKey(t *testing.T) {
+	opts := &Opts{
+		Directory: TMP_DIR,
+	}
+	dc, err := New(opts)
+	if err != nil {
+		t.Error(err)
+	}
+	err = dc.SetExpired("TestNoExpiredKey", []byte("value"), 1000)
+	if err != nil {
+		t.Error(err)
+	}
+	time.Sleep(time.Second * 2)
+	fmt.Println(dc.getExpiredTime("TestNoExpiredKey"))
 }
 
 // Benchmark Set operations

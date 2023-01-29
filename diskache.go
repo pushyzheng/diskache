@@ -3,22 +3,30 @@ package diskache
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"io/ioutil"
+	"encoding/json"
+	"github.com/GitbookIO/syncgroup"
+	"io"
 	"log"
 	"os"
 	"path"
-
-	"github.com/GitbookIO/syncgroup"
+	"time"
 )
 
+const expiredTimestamp = 0
+
+const expiredTableName = "expired-table"
+
 type Diskache struct {
-	directory string
-	items     int
-	lock      *syncgroup.MutexGroup
+	directory             string
+	expiredTableDirectory string
+	items                 int
+	lock                  *syncgroup.MutexGroup
+	expiredTime           int64
 }
 
 type Opts struct {
-	Directory string
+	Directory   string // dir name
+	ExpiredTime int64  // ms
 }
 
 type Stats struct {
@@ -31,14 +39,34 @@ func New(opts *Opts) (*Diskache, error) {
 	if err := os.MkdirAll(opts.Directory, os.ModePerm); err != nil {
 		return nil, err
 	}
-
+	if opts.ExpiredTime <= 0 {
+		// default is 1s
+		opts.ExpiredTime = 1000
+	}
 	// Create Diskache instance
 	dc := &Diskache{
-		directory: opts.Directory,
-		lock:      syncgroup.NewMutexGroup(),
+		directory:             opts.Directory,
+		expiredTableDirectory: path.Join(opts.Directory, "expired-table.json"),
+		expiredTime:           opts.ExpiredTime,
+		lock:                  syncgroup.NewMutexGroup(),
 	}
 
 	return dc, nil
+}
+
+func (dc *Diskache) SetJson(key string, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return dc.Set(key, b)
+}
+
+func (dc *Diskache) SetStr(key string, value string) error {
+	if len(value) == 0 {
+		return nil
+	}
+	return dc.Set(key, []byte(value))
 }
 
 func (dc *Diskache) Set(key string, data []byte) error {
@@ -61,33 +89,48 @@ func (dc *Diskache) Set(key string, data []byte) error {
 		// Increment items
 		dc.items += 1
 	}
-
 	return err
 }
 
+func (dc *Diskache) SetExpired(key string, data []byte, expired int64) error {
+	err := dc.Set(key, data)
+	if err != nil {
+		return err
+	}
+	err = dc.setExpiredTime(key, getTimestamp()+expired)
+	if err != nil {
+		log.Printf("set expired time error, key = %s, err = %s", key, err)
+		return err
+	}
+	return nil
+}
+
 func (dc *Diskache) Get(key string) ([]byte, bool) {
-	// Get encoded key
-	filename := dc.buildFilename(key)
-
-	// Lock for reading
-	dc.lock.RLock(filename)
-	defer dc.lock.RUnlock(filename)
-
-	// Open file
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, false
+	b, exists := dc.getKey(key)
+	if !exists {
+		return b, false
 	}
-	defer file.Close()
-
-	// Read file
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Printf("Diskache: Error reading from file %s\n", key)
+	// lazy check expired time
+	if expired, _ := dc.IsExpired(key); expired {
+		_ = dc.setExpiredTime(key, expiredTimestamp)
 		return nil, false
+	} else {
+		return b, true
 	}
+}
 
-	return data, true
+func (dc *Diskache) GetStr(key string) (string, bool) {
+	if b, exists := dc.Get(key); exists {
+		return string(b), true
+	}
+	return "", false
+}
+
+func (dc *Diskache) GetJson(key string) (string, bool) {
+	if b, exists := dc.Get(key); exists {
+		return string(b), true
+	}
+	return "", false
 }
 
 func (dc *Diskache) Clean() error {
@@ -106,8 +149,80 @@ func (dc *Diskache) Stats() Stats {
 	}
 }
 
+func (dc *Diskache) IsExpired(key string) (bool, error) {
+	expired, err := dc.getExpiredTime(key)
+	if err != nil {
+		return true, err
+	}
+	if expired == expiredTimestamp {
+		return false, nil
+	}
+	return getTimestamp() >= expired, nil
+}
+
+func (dc *Diskache) getKey(key string) ([]byte, bool) {
+	// Get encoded key
+	filename := dc.buildFilename(key)
+
+	// Lock for reading
+	dc.lock.RLock(filename)
+	defer dc.lock.RUnlock(filename)
+
+	// Open file
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+
+	// Read file
+	data, err := io.ReadAll(file)
+	if err != nil {
+		log.Printf("Diskache: Error reading from file %s\n", key)
+		return nil, false
+	}
+	return data, true
+}
+
+func (dc *Diskache) getExpiredTime(k string) (int64, error) {
+	var table map[string]int64
+	b, exists := dc.getKey(expiredTableName)
+	if !exists {
+		return 0, nil
+	}
+	err := json.Unmarshal(b, &table)
+	if err != nil {
+		return -1, nil
+	}
+	if t, ok := table[k]; !ok {
+		return 0, nil
+	} else {
+		return t, nil
+	}
+}
+
+func (dc *Diskache) setExpiredTime(k string, t int64) error {
+	var table map[string]int64
+	b, exists := dc.getKey(expiredTableName)
+	if !exists {
+		table = make(map[string]int64)
+	} else {
+		err := json.Unmarshal(b, &table)
+		if err != nil {
+			return err
+		}
+	}
+	table[k] = t
+	// write table
+	return dc.SetJson(expiredTableName, table)
+}
+
 func (dc *Diskache) buildFilename(key string) string {
 	hasher := sha256.New()
 	hasher.Write([]byte(key))
 	return path.Join(dc.directory, hex.EncodeToString(hasher.Sum(nil)))
+}
+
+func getTimestamp() int64 {
+	return time.Now().UnixMilli()
 }
