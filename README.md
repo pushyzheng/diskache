@@ -5,7 +5,7 @@ Lightweight Golang disk cache.
 ## Get
 
 ```Shell
-$ go get github.com/GitbookIO/diskache
+$ go get github.com/pushyzheng/diskache
 ```
 
 ## Use
@@ -20,7 +20,10 @@ import (
 opts := diskache.Opts{
     Directory: "diskache_place",
 }
-dc := diskache.New(opts)
+dc, err := diskache.New(&opts)
+if err != nil {
+    log.Fatalln(err)
+}
 
 // Add data to cache
 spelling := []byte{'g', 'o', 'l', 'a', 'n', 'g'}
@@ -29,10 +32,23 @@ if err != nil {
     fmt.Println("Impossible to set data in cache")
 }
 
+// Add data to cache with expired time (1s)
+data := []byte("Hello World")
+err = cache.SetExpired("spelling-expired", data, time.Second.Milliseconds())
+if err != nil {
+    log.Fatalln(err)
+}
+
 // Read from cache
 cached, inCache := dc.Get("spelling")
 if inCache {
     fmt.Println(string(cached))
+}
+
+// Delete from cache
+ok := dc.Delete("spelling")
+if ok {
+    fmt.Println("delete cache succeed")
 }
 
 // Read stats

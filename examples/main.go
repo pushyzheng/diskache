@@ -21,7 +21,7 @@ func main() {
 	}
 	fmt.Println(cache.GetStr("foo"))
 
-	err = cache.SetExpired("foo-expired", []byte("Hello World"), 500)
+	err = cache.SetExpired("foo-expired", []byte("Hello World"), time.Second.Milliseconds())
 	if err != nil {
 		log.Fatalln(err)
 	}

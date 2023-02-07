@@ -129,7 +129,7 @@ func (dc *Diskache) GetJson(key string) (string, bool) {
 func (dc *Diskache) Delete(key string) bool {
 	// Get encoded key
 	filename := dc.buildFilename(key)
-	// Lock for removing
+	// Lock for deleting
 	dc.lock.RLock(filename)
 	defer dc.lock.RUnlock(filename)
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
