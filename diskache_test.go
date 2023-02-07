@@ -61,10 +61,31 @@ func TestSetGet(t *testing.T) {
 	}
 }
 
+func TestDiskache_Delete(t *testing.T) {
+	opts := &Opts{
+		Directory: TMP_DIR,
+	}
+	cache, err := New(opts)
+	if err != nil {
+		t.Error(err)
+	}
+	err = cache.SetStr("foo", "Hello World")
+	if err != nil {
+		t.Error(err)
+	}
+	ok := cache.Delete("foo")
+	if !ok {
+		t.Error("expected: true, actual: false")
+	}
+	_, exists := cache.GetStr("foo")
+	if exists {
+		t.Error("expected: false, actual: true")
+	}
+}
+
 func TestGetExpiredKey(t *testing.T) {
 	opts := &Opts{
-		Directory:   TMP_DIR,
-		ExpiredTime: time.Second.Milliseconds() * 1,
+		Directory: TMP_DIR,
 	}
 	dc, err := New(opts)
 	if err != nil {
@@ -132,8 +153,7 @@ func TestConcurrent(t *testing.T) {
 
 func TestDiskache_IsExpired(t *testing.T) {
 	opts := &Opts{
-		Directory:   TMP_DIR,
-		ExpiredTime: 1000,
+		Directory: TMP_DIR,
 	}
 	dc, err := New(opts)
 	if err != nil {

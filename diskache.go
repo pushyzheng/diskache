@@ -25,8 +25,7 @@ type Diskache struct {
 }
 
 type Opts struct {
-	Directory   string // dir name
-	ExpiredTime int64  // ms
+	Directory string // dir name
 }
 
 type Stats struct {
@@ -39,18 +38,12 @@ func New(opts *Opts) (*Diskache, error) {
 	if err := os.MkdirAll(opts.Directory, os.ModePerm); err != nil {
 		return nil, err
 	}
-	if opts.ExpiredTime <= 0 {
-		// default is 1s
-		opts.ExpiredTime = 1000
-	}
 	// Create Diskache instance
 	dc := &Diskache{
 		directory:             opts.Directory,
 		expiredTableDirectory: path.Join(opts.Directory, "expired-table.json"),
-		expiredTime:           opts.ExpiredTime,
 		lock:                  syncgroup.NewMutexGroup(),
 	}
-
 	return dc, nil
 }
 
@@ -131,6 +124,23 @@ func (dc *Diskache) GetJson(key string) (string, bool) {
 		return string(b), true
 	}
 	return "", false
+}
+
+func (dc *Diskache) Delete(key string) bool {
+	// Get encoded key
+	filename := dc.buildFilename(key)
+	// Lock for removing
+	dc.lock.RLock(filename)
+	defer dc.lock.RUnlock(filename)
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return true
+	}
+	err := os.Remove(filename)
+	if err != nil {
+		log.Println("[error] fail to remove cache file:", err.Error())
+		return false
+	}
+	return true
 }
 
 func (dc *Diskache) Clean() error {
